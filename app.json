@@ -125,6 +125,10 @@
     {
       "name": "开启/关闭在日志中显示消息(&R)",
       "function": "menu_toggle_log_message"
+    },
+    {
+      "name": "开启/关闭发送统计消息数量(&S)",
+      "function": "menu_toggle_stat_schedule"
     }
   ],
     "status": [],
