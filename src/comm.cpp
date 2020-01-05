@@ -115,7 +115,7 @@ CQ_INIT {
             if (CQUninitSharedMemory()) {
                 logging::info("加载", "已释放。");
             } else {
-                logging::error("加载","释放失败。");
+                logging::error("加载", "释放失败。");
             }
         }
         if (CQInitSharedMemory()) {
@@ -143,6 +143,7 @@ CQ_INIT {
             }
         }
         std::string msg = e.message;
+        if (remark == name) remark.clear();
         CQRecord &r = CQAddRecord(e.user_id, 0, name.c_str(), remark.c_str(), "", msg.c_str());
         if (!logMessage) return;
         std::string log = r.user_name;
@@ -168,6 +169,7 @@ CQ_INIT {
             name = getUserName(e.user_id, false);
         }
         std::string msg = e.message;
+        if (remark == name) remark.clear();
         CQRecord &r =
             CQAddRecord(e.user_id, e.discuss_id, name.c_str(), remark.c_str(), group_name.c_str(), msg.c_str());
         if (!logMessage) return;
@@ -214,7 +216,9 @@ CQ_INIT {
         } else {
             name = getUserName(e.user_id, false);
         }
-        CQRecord &r = CQAddRecord(e.user_id, e.group_id, name.c_str(), remark.c_str(), group_name.c_str(), msg.c_str());
+        if (remark == name) remark.clear();
+        CQRecord &r =
+                CQAddRecord(e.user_id, e.group_id, name.c_str(), remark.c_str(), group_name.c_str(), msg.c_str());
         if (!logMessage) return;
         std::string log = group_name;
         if (logShowQQ) log += "(" + std::to_string(e.group_id) + ")";
