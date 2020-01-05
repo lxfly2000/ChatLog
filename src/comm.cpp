@@ -95,6 +95,56 @@ std::string lower(const std::string &str) {
     return r;
 }
 
+void EchoCommand(const MessageEvent &e, uint64_t user_id, uint64_t discuss_id, uint64_t group_id) {
+    std::string cmd = e.message.substr(5);
+    try {
+        if (group_id)
+            send_group_message(group_id, cmd);
+        else if (discuss_id)
+            send_discuss_message(discuss_id, cmd);
+        else
+            send_private_message(user_id, cmd);
+    } catch (ApiError ex) {
+        if (group_id)
+            send_group_message(group_id, ex.what());
+        else if (discuss_id)
+            send_discuss_message(discuss_id, ex.what());
+        else
+            send_private_message(user_id, ex.what());
+    }
+}
+
+void ProcessMsg(const cq::MessageEvent &e, uint64_t user_id, uint64_t discuss_id, uint64_t group_id) {
+    std::string msg = e.message;
+    if (lower(msg) == "帮助") {
+        send_message(e.target, "可用指令：\nChatLog - 消息记录\necho - 发送消息");
+    }
+    if (lower(msg) == "chatlog") {
+        send_message(e.target, "ChatLog 消息记录程序\n输入“ChatLog 帮助”获取命令行使用方法。");
+    }
+    if (lower(msg) == "chatlog 帮助") {
+        send_message(e.target,
+                     "ChatLog 指令：\nChatLog 记录 <n> - 发送最近n条消息记录\nChatLog 总数 - 发送已记录的消息数量");
+    }
+    if (lower(msg) == "chatlog 总数") {
+        send_message(e.target, "已记录到" + std::to_string(CQGetSharedMemory().count) + "条消息。");
+    }
+    std::smatch sm;
+    if (std::regex_match(msg, sm, std::regex("^chatlog 记录 (\\d+)$"))) {
+        if (user_id == get_login_user_id())
+            send_message(e.target, getRecentMessages(atoi(sm[1].str().c_str()), true));
+        else
+            send_message(e.target,
+                         "你无权查看完整内容。\n" + getRecentMessages(min(5, atoi(sm[1].str().c_str())), false));
+    }
+    if (lower(e.message) == "echo") {
+        send_message(e.target, "echo 指令：\necho <消息> - 发送消息");
+    }
+    if (lower(e.message.substr(0, 5)) == "echo ") {
+        EchoCommand(e,user_id,discuss_id,group_id);
+    }
+}
+
 std::string getFriendName(int64_t qq_id, bool contain_id) {
     auto qq_friends = get_friend_list();
     std::string r = "[NOT FOUND]";
@@ -161,15 +211,6 @@ void StartStatScheduleTimer() {
     iScheduleTimerID = timeSetEvent(60000, 60000, ScheduleCallback, NULL, TIME_PERIODIC);
 }
 
-void EchoCommand(const GroupMessageEvent &e) {
-    std::string cmd = e.message.substr(5);
-    try {
-        send_group_message(e.group_id, cmd);
-    } catch (ApiError ex) {
-        send_group_message(e.group_id, ex.what());
-    }
-}
-
 CQ_INIT {
     on_enable([] { logging::info("启用", "插件已启用"); });
     on_disable([] { logging::info("停用", "插件已停用"); });
@@ -201,6 +242,7 @@ CQ_INIT {
     });
 
     on_private_message([](const PrivateMessageEvent &e) {
+        ProcessMsg(e, e.user_id, 0, 0);
         std::string name = "[NOT FOUND]";
         std::string remark;
         for (auto &f : get_friend_list()) {
@@ -222,6 +264,7 @@ CQ_INIT {
     });
 
     on_discuss_message([](const DiscussMessageEvent &e) {
+        ProcessMsg(e, e.user_id, e.discuss_id,0);
         std::string group_name = getGroupName(e.discuss_id, false);
         std::string name = "[NOT FOUND]";
         std::string remark;
@@ -250,38 +293,10 @@ CQ_INIT {
     });
 
     on_group_message([](const GroupMessageEvent &e) {
-        std::string msg = e.message;
-        if (lower(msg) == "帮助") {
-            send_message(e.target, "可用指令：\nChatLog - 消息记录\necho - 发送消息");
-        }
-        if (lower(msg) == "chatlog") {
-            send_message(e.target, "ChatLog 消息记录程序\n输入“ChatLog 帮助”获取命令行使用方法。");
-        }
-        if (lower(msg) == "chatlog 帮助") {
-            send_message(e.target,
-                         "ChatLog 指令：\nChatLog 记录 <n> - 发送最近n条消息记录\nChatLog 总数 - 发送已记录的消息数量");
-        }
-        if (lower(msg) == "chatlog 总数") {
-            send_message(e.target, "已记录到" + std::to_string(CQGetSharedMemory().count) + "条消息。");
-        }
-        std::smatch sm;
-        if (std::regex_match(msg, sm, std::regex("^chatlog 记录 (\\d+)$"))) {
-            if (e.user_id == get_login_user_id())
-                send_message(e.target, getRecentMessages(atoi(sm[1].str().c_str()), true));
-            else
-                send_message(e.target,
-                             "你无权查看完整内容。\n" + getRecentMessages(min(5, atoi(sm[1].str().c_str())), false));
-        }
+        ProcessMsg(e, e.user_id, 0, e.group_id);
         if (group_msg_count.find(e.group_id) == group_msg_count.end()) {
             group_msg_count.insert(std::make_pair(e.group_id, 0));
         }
-        if (lower(e.message) == "echo") {
-            send_message(e.target, "echo 指令：\necho <消息> - 发送消息");
-        }
-        if (lower(e.message.substr(0, 5)) == "echo ") {
-            EchoCommand(e);
-        }
-
         group_msg_count[e.group_id]++;
         std::string group_name = getGroupName(e.group_id, false);
         std::string name = "[NOT FOUND]";
@@ -298,7 +313,7 @@ CQ_INIT {
             name = getUserName(e.user_id, false);
         }
         if (remark == name) remark.clear();
-        CQRecord &r = CQAddRecord(e.user_id, e.group_id, name.c_str(), remark.c_str(), group_name.c_str(), msg.c_str());
+        CQRecord &r = CQAddRecord(e.user_id, e.group_id, name.c_str(), remark.c_str(), group_name.c_str(), e.message.c_str());
         if (!logMessage) return;
         std::string log = group_name;
         if (logShowQQ) log += "(" + std::to_string(e.group_id) + ")";
