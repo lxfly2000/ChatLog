@@ -1,4 +1,6 @@
+#include <fstream>
 #include <iostream>
+#include <map>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -6,11 +8,49 @@
 #include "cqcppsdk.h"
 #include "comm.hpp"
 
+
+#pragma comment(lib, "winmm.lib")
+
 using namespace cq;
 using namespace std;
 
 static bool logShowQQ = false;
 static bool logMessage = false;
+static bool statMessageCount = true;
+std::map<uint64_t, uint32_t> group_msg_count;
+
+int iScheduleTimerID = 0;
+tm last_localtm{};
+
+void CALLBACK ScheduleCallback(UINT wTimerID, UINT nMsg, DWORD dwUser, DWORD dw1, DWORD dw2) {
+    tm localtm;
+    time_t localt = time(NULL);
+    localtime_s(&localtm, &localt);
+    if (localtm.tm_hour != last_localtm.tm_hour) {
+        if (last_localtm.tm_year) {
+            std::map<uint64_t, std::string> gmsg;
+            for (auto &gm : group_msg_count) {
+                char msg[200];
+                sprintf(msg,
+                        "本群在%d:%02d:%02d～%d:%02d:%02d期间共收到%d条消息。",
+                        last_localtm.tm_hour,
+                        last_localtm.tm_min,
+                        last_localtm.tm_sec,
+                        localtm.tm_hour,
+                        localtm.tm_min,
+                        localtm.tm_sec,
+                        gm.second);
+                gmsg.insert(std::make_pair(gm.first, msg));
+            }
+            group_msg_count.clear();
+            for (auto &gm : gmsg) {
+                Sleep(1000);
+                send_group_message(gm.first, gm.second);
+            }
+        }
+        last_localtm = localtm;
+    }
+}
 
 std::string getRecentMessages(int count, bool send_privacy) {
     std::string msg = "最近" + std::to_string(count) + "条消息：";
@@ -106,6 +146,30 @@ std::string getGroupName(int64_t group_id, bool contain_id) {
     return r;
 }
 
+void StopStatScheduleTimer() {
+    logging::info("计时器", "停止统计定时器……");
+    timeKillEvent(iScheduleTimerID);
+    iScheduleTimerID = 0;
+}
+
+void StartStatScheduleTimer() {
+    if (iScheduleTimerID) {
+        logging::info("计时器", "检测到程序未正确释放统计定时器。");
+        timeKillEvent(iScheduleTimerID);
+    }
+    logging::info("计时器", "启动统计定时器……");
+    iScheduleTimerID = timeSetEvent(60000, 60000, ScheduleCallback, NULL, TIME_PERIODIC);
+}
+
+void EchoCommand(const GroupMessageEvent &e) {
+    std::string cmd = e.message.substr(5);
+    try {
+        send_group_message(e.group_id, cmd);
+    } catch (ApiError ex) {
+        send_group_message(e.group_id, ex.what());
+    }
+}
+
 CQ_INIT {
     on_enable([] { logging::info("启用", "插件已启用"); });
     on_disable([] { logging::info("停用", "插件已停用"); });
@@ -123,8 +187,12 @@ CQ_INIT {
         } else {
             logging::error("加载", "无法加载共享内存。");
         }
+        if (statMessageCount) {
+            StartStatScheduleTimer();
+        }
     });
     on_coolq_exit([] {
+        StopStatScheduleTimer();
         if (CQUninitSharedMemory()) {
             logging::info("释放", "已释放共享内存。");
         } else {
@@ -183,7 +251,10 @@ CQ_INIT {
 
     on_group_message([](const GroupMessageEvent &e) {
         std::string msg = e.message;
-        if (lower(msg) == "chatlog" || lower(msg) == "帮助") {
+        if (lower(msg) == "帮助") {
+            send_message(e.target, "可用指令：\nChatLog - 消息记录\necho - 发送消息");
+        }
+        if (lower(msg) == "chatlog") {
             send_message(e.target, "ChatLog 消息记录程序\n输入“ChatLog 帮助”获取命令行使用方法。");
         }
         if (lower(msg) == "chatlog 帮助") {
@@ -201,7 +272,17 @@ CQ_INIT {
                 send_message(e.target,
                              "你无权查看完整内容。\n" + getRecentMessages(min(5, atoi(sm[1].str().c_str())), false));
         }
+        if (group_msg_count.find(e.group_id) == group_msg_count.end()) {
+            group_msg_count.insert(std::make_pair(e.group_id, 0));
+        }
+        if (lower(e.message) == "echo") {
+            send_message(e.target, "echo 指令：\necho <消息> - 发送消息");
+        }
+        if (lower(e.message.substr(0, 5)) == "echo ") {
+            EchoCommand(e);
+        }
 
+        group_msg_count[e.group_id]++;
         std::string group_name = getGroupName(e.group_id, false);
         std::string name = "[NOT FOUND]";
         std::string remark;
@@ -217,8 +298,7 @@ CQ_INIT {
             name = getUserName(e.user_id, false);
         }
         if (remark == name) remark.clear();
-        CQRecord &r =
-                CQAddRecord(e.user_id, e.group_id, name.c_str(), remark.c_str(), group_name.c_str(), msg.c_str());
+        CQRecord &r = CQAddRecord(e.user_id, e.group_id, name.c_str(), remark.c_str(), group_name.c_str(), msg.c_str());
         if (!logMessage) return;
         std::string log = group_name;
         if (logShowQQ) log += "(" + std::to_string(e.group_id) + ")";
@@ -264,4 +344,12 @@ CQ_MENU(menu_toggle_log_message) {
     else
         msg = "已关闭。";
     cq::logging::info("在日志中显示消息", msg);
+}
+
+CQ_MENU(menu_toggle_stat_schedule) {
+    statMessageCount = !statMessageCount;
+    if (statMessageCount)
+        StartStatScheduleTimer();
+    else
+        StopStatScheduleTimer();
 }
