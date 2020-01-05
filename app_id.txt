@@ -1,1 +1,1 @@
-com.example.demo
+com.lxfly2000.cqa.chatlog

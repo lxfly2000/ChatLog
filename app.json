@@ -1,11 +1,11 @@
 {
     "ret": 1,
     "apiver": 9,
-    "name": "填写应用名称",
-    "version": "1.0.0",
-    "version_id": 1,
-    "author": "填写你的名字或 Id",
-    "description": "填写你的应用描述",
+    "name": "ChatLog",
+    "version": "1.0.1",
+    "version_id": 2,
+    "author": "lxfly2000",
+    "description": "消息记录程序",
     "event": [ // 可以修改 priority 来调整插件的优先级, 其它字段不可修改, 否则将无法使用
         {
             "id": 1003,
@@ -113,16 +113,20 @@
             "priority": 30000
         }
     ],
-    "menu": [ // name 字段为显示在酷Q应用菜单中的文字, function 字段对应 CQ_MENU 宏调用的参数
-        {
-            "name": "菜单 1",
-            "function": "menu_demo_1"
-        },
-        {
-            "name": "菜单 2",
-            "function": "menu_demo_2"
-        }
-    ],
+  "menu": [ // name 字段为显示在酷Q应用菜单中的文字, function 字段对应 CQ_MENU 宏调用的参数
+    {
+      "name": "发送消息记录(&F)",
+      "function": "menu_send_msg_record"
+    },
+    {
+      "name": "开启/关闭在日志中显示QQ号(&T)",
+      "function": "menu_toggle_log_show_qq"
+    },
+    {
+      "name": "开启/关闭在日志中显示消息(&R)",
+      "function": "menu_toggle_log_message"
+    }
+  ],
     "status": [],
     "auth": [ // 需要根据 API 调用情况来注释或取消注释这里的项
         // 20, // get_cookies / get_csrf_token
