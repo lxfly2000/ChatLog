@@ -1,4 +1,3 @@
-#include <fstream>
 #include <iostream>
 #include <map>
 #include <regex>
@@ -16,41 +15,10 @@ using namespace std;
 
 static bool logShowQQ = false;
 static bool logMessage = false;
-static bool statMessageCount = true;
 std::map<uint64_t, uint32_t> group_msg_count;
 
 int iScheduleTimerID = 0;
 tm last_localtm{};
-
-void CALLBACK ScheduleCallback(UINT wTimerID, UINT nMsg, DWORD dwUser, DWORD dw1, DWORD dw2) {
-    tm localtm;
-    time_t localt = time(NULL);
-    localtime_s(&localtm, &localt);
-    if (localtm.tm_hour != last_localtm.tm_hour) {
-        if (last_localtm.tm_year) {
-            std::map<uint64_t, std::string> gmsg;
-            for (auto &gm : group_msg_count) {
-                char msg[200];
-                sprintf(msg,
-                        "本群在%d:%02d:%02d～%d:%02d:%02d期间共收到%d条消息。",
-                        last_localtm.tm_hour,
-                        last_localtm.tm_min,
-                        last_localtm.tm_sec,
-                        localtm.tm_hour,
-                        localtm.tm_min,
-                        localtm.tm_sec,
-                        gm.second);
-                gmsg.insert(std::make_pair(gm.first, msg));
-            }
-            group_msg_count.clear();
-            for (auto &gm : gmsg) {
-                Sleep(1000);
-                send_group_message(gm.first, gm.second);
-            }
-        }
-        last_localtm = localtm;
-    }
-}
 
 std::string getRecentMessages(int count, bool send_privacy) {
     std::string msg = "最近" + std::to_string(count) + "条消息：";
@@ -95,53 +63,74 @@ std::string lower(const std::string &str) {
     return r;
 }
 
-void EchoCommand(const MessageEvent &e, uint64_t user_id, uint64_t discuss_id, uint64_t group_id) {
+void EchoCommand(const MessageEvent &e, uint64_t user_id, uint64_t discuss_id, uint64_t group_id) throw(ApiError) {
     std::string cmd = e.message.substr(5);
-    try {
-        if (group_id)
-            send_group_message(group_id, cmd);
-        else if (discuss_id)
-            send_discuss_message(discuss_id, cmd);
-        else
-            send_private_message(user_id, cmd);
-    } catch (ApiError ex) {
-        if (group_id)
-            send_group_message(group_id, ex.what());
-        else if (discuss_id)
-            send_discuss_message(discuss_id, ex.what());
-        else
-            send_private_message(user_id, ex.what());
-    }
+    if (group_id)
+        send_group_message(group_id, cmd);
+    else if (discuss_id)
+        send_discuss_message(discuss_id, cmd);
+    else
+        send_private_message(user_id, cmd);
 }
+
+void StopStatScheduleTimer();
+void StartStatScheduleTimer();
+void ProcessException(const ApiError &ex, const string &msg, uint64_t user_id, uint64_t discuss_id, uint64_t group_id);
 
 void ProcessMsg(const cq::MessageEvent &e, uint64_t user_id, uint64_t discuss_id, uint64_t group_id) {
     std::string msg = e.message;
-    if (lower(msg) == "帮助") {
-        send_message(e.target, "可用指令：\nChatLog - 消息记录\necho - 发送消息");
-    }
-    if (lower(msg) == "chatlog") {
-        send_message(e.target, "ChatLog 消息记录程序\n输入“ChatLog 帮助”获取命令行使用方法。");
-    }
-    if (lower(msg) == "chatlog 帮助") {
-        send_message(e.target,
-                     "ChatLog 指令：\nChatLog 记录 <n> - 发送最近n条消息记录\nChatLog 总数 - 发送已记录的消息数量");
-    }
-    if (lower(msg) == "chatlog 总数") {
-        send_message(e.target, "已记录到" + std::to_string(CQGetSharedMemory().count) + "条消息。");
-    }
-    std::smatch sm;
-    if (std::regex_match(msg, sm, std::regex("^chatlog 记录 (\\d+)$"))) {
-        if (user_id == get_login_user_id())
-            send_message(e.target, getRecentMessages(atoi(sm[1].str().c_str()), true));
-        else
+    string sms;
+    try {
+        if (lower(msg) == "帮助") {
+            send_message(e.target, sms = "可用指令：\nChatLog - 消息记录\necho - 发送消息");
+        }
+        if (lower(msg) == "chatlog") {
+            send_message(e.target, sms = "ChatLog 消息记录程序\n输入“ChatLog 帮助”获取命令行使用方法。");
+        }
+        if (lower(msg) == "chatlog 帮助") {
+            send_message(
+                e.target,
+                sms = "ChatLog 指令：\nChatLog 记录 <n> - 发送最近n条消息记录\nChatLog 总数 - 发送已记录的消息数量");
+        }
+        if (lower(msg) == "chatlog 总数") {
+            send_message(e.target, sms = "已记录到" + std::to_string(CQGetSharedMemory().count) + "条消息。");
+        }
+        std::smatch sm;
+        if (std::regex_match(msg, sm, std::regex("^chatlog 记录 (\\d+)$"))) {
+            if (user_id == get_login_user_id())
+                send_message(e.target, sms = getRecentMessages(atoi(sm[1].str().c_str()), true));
+            else
+                send_message(
+                    e.target,
+                    sms = "你无权查看完整内容。\n" + getRecentMessages(min(5, atoi(sm[1].str().c_str())), false));
+        }
+        if (lower(e.message) == "echo") {
+            send_message(e.target, sms = "echo 指令：\necho <消息> - 发送消息");
+        }
+        if (lower(e.message.substr(0, 5)) == "echo ") {
+            EchoCommand(e, user_id, discuss_id, group_id);
+        }
+        if (e.message == "统计") {
+            string s = iScheduleTimerID ? "开启" : "关闭";
             send_message(e.target,
-                         "你无权查看完整内容。\n" + getRecentMessages(min(5, atoi(sm[1].str().c_str())), false));
-    }
-    if (lower(e.message) == "echo") {
-        send_message(e.target, "echo 指令：\necho <消息> - 发送消息");
-    }
-    if (lower(e.message.substr(0, 5)) == "echo ") {
-        EchoCommand(e,user_id,discuss_id,group_id);
+                         sms = "消息统计功能状态：" + s + "\n发送“统计 开启”或“统计 关闭”可开启或关闭统计功能。");
+        }
+        if (e.message == "统计 开启") {
+            StartStatScheduleTimer();
+            if (iScheduleTimerID)
+                send_message(e.target, sms = "已开启消息统计功能。");
+            else
+                send_message(e.target, sms = "无法开启消息统计功能。");
+        }
+        if (e.message == "统计 关闭") {
+            StopStatScheduleTimer();
+            if (iScheduleTimerID)
+                send_message(e.target, sms = "无法关闭消息统计功能。");
+            else
+                send_message(e.target, sms = "已关闭消息统计功能。");
+        }
+    } catch (const ApiError &ex) {
+        ProcessException(ex, sms, user_id, discuss_id, group_id);
     }
 }
 
@@ -196,6 +185,56 @@ std::string getGroupName(int64_t group_id, bool contain_id) {
     return r;
 }
 
+void ProcessException(const ApiError &ex, const string &msg, uint64_t user_id, uint64_t discuss_id, uint64_t group_id) {
+    string sm;
+    if (group_id)
+        sm = "发送群消息失败：" + string(ex.what()) + "\n群：" + getGroupName(group_id, true) + "\n消息：" + msg;
+    else if (discuss_id)
+        sm = "发送讨论组消息失败：" + string(ex.what()) + "\n讨论组：" + to_string(discuss_id) + "\n消息：" + msg;
+    else
+        sm = "发送好友消息失败：" + string(ex.what()) + "\n好友：" + getFriendName(user_id, true) + "\n消息：" + msg;
+    try {
+        send_private_message(get_login_user_id(), sm);
+    } catch (const ApiError &ex2) {
+        logging::error("异常处理", "发送异常处理消息失败：" + string(ex2.what()));
+    }
+    logging::error("异常处理", sm);
+}
+
+void CALLBACK ScheduleCallback(UINT wTimerID, UINT nMsg, DWORD dwUser, DWORD dw1, DWORD dw2) {
+    tm localtm;
+    time_t localt = time(NULL);
+    localtime_s(&localtm, &localt);
+    if (localtm.tm_hour != last_localtm.tm_hour) {
+        if (last_localtm.tm_year) {
+            std::map<uint64_t, std::string> gmsg;
+            for (auto &gm : group_msg_count) {
+                char msg[200];
+                sprintf(msg,
+                        "本群在%d:%02d:%02d～%d:%02d:%02d期间共收到%d条消息。",
+                        last_localtm.tm_hour,
+                        last_localtm.tm_min,
+                        last_localtm.tm_sec,
+                        localtm.tm_hour,
+                        localtm.tm_min,
+                        localtm.tm_sec,
+                        gm.second);
+                gmsg.insert(std::make_pair(gm.first, msg));
+            }
+            group_msg_count.clear();
+            for (auto &gm : gmsg) {
+                Sleep(1000);
+                try {
+                    send_group_message(gm.first, gm.second);
+                } catch (const ApiError &ex) {
+                    ProcessException(ex, gm.second, 0, 0, gm.first);
+                }
+            }
+        }
+        last_localtm = localtm;
+    }
+}
+
 void StopStatScheduleTimer() {
     logging::info("计时器", "停止统计定时器……");
     timeKillEvent(iScheduleTimerID);
@@ -228,9 +267,7 @@ CQ_INIT {
         } else {
             logging::error("加载", "无法加载共享内存。");
         }
-        if (statMessageCount) {
-            StartStatScheduleTimer();
-        }
+        StartStatScheduleTimer();
     });
     on_coolq_exit([] {
         StopStatScheduleTimer();
@@ -264,7 +301,7 @@ CQ_INIT {
     });
 
     on_discuss_message([](const DiscussMessageEvent &e) {
-        ProcessMsg(e, e.user_id, e.discuss_id,0);
+        ProcessMsg(e, e.user_id, e.discuss_id, 0);
         std::string group_name = getGroupName(e.discuss_id, false);
         std::string name = "[NOT FOUND]";
         std::string remark;
@@ -313,7 +350,8 @@ CQ_INIT {
             name = getUserName(e.user_id, false);
         }
         if (remark == name) remark.clear();
-        CQRecord &r = CQAddRecord(e.user_id, e.group_id, name.c_str(), remark.c_str(), group_name.c_str(), e.message.c_str());
+        CQRecord &r =
+            CQAddRecord(e.user_id, e.group_id, name.c_str(), remark.c_str(), group_name.c_str(), e.message.c_str());
         if (!logMessage) return;
         std::string log = group_name;
         if (logShowQQ) log += "(" + std::to_string(e.group_id) + ")";
@@ -328,7 +366,8 @@ CQ_INIT {
         ss << "您上传了一个文件, 文件名: " << e.file.name << ", 大小(字节): " << e.file.size;
         try {
             send_message(e.target, ss.str());
-        } catch (ApiError &) {
+        } catch (const ApiError &ex) {
+            ProcessException(ex, ss.str(), 0, 0, e.group_id);
         }
     });
 }
@@ -362,9 +401,8 @@ CQ_MENU(menu_toggle_log_message) {
 }
 
 CQ_MENU(menu_toggle_stat_schedule) {
-    statMessageCount = !statMessageCount;
-    if (statMessageCount)
-        StartStatScheduleTimer();
-    else
+    if (iScheduleTimerID)
         StopStatScheduleTimer();
+    else
+        StartStatScheduleTimer();
 }
