@@ -8,7 +8,6 @@
 #include <cqcppsdk/cqcppsdk.h>
 
 #include <WS2tcpip.h>
-
 #include "comm.hpp"
 
 #pragma comment(lib, "winmm.lib")
@@ -19,7 +18,9 @@ using namespace std;
 
 static bool logShowQQ = false;
 static bool logMessage = false;
+static bool friendAutoReply = true;
 std::map<uint64_t, uint32_t> group_msg_count;
+std::map<uint64_t, time_t> friend_usage_sent;
 
 int iScheduleTimerID = 0;
 tm last_localtm{};
@@ -85,12 +86,12 @@ string GetErrorMsg(DWORD e) {
     WCHAR msgBufW[80] = L"";
 
     FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                  NULL,
-                  e,
-                  MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                  msgBufW,
-                  ARRAYSIZE(msgBufW),
-                  NULL);
+                   NULL,
+                   e,
+                   MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                   msgBufW,
+                   ARRAYSIZE(msgBufW),
+                   NULL);
     if (msgBufW[0] == 0) return "发生错误。";
     wstring msgStrW = msgBufW;
     size_t pln = msgStrW.find('\n');
@@ -117,7 +118,7 @@ string GetLocalAddress() {
         addrinfo *addr_info = NULL;
         DWORD e = getaddrinfo(strHost, NULL, NULL, &addr_info);
         if (e) {
-            msg += "\n"+GetErrorMsg(e)+"("+ToHex(e)+")";
+            msg += "\n" + GetErrorMsg(e) + "(" + ToHex(e) + ")";
         } else {
             for (addrinfo *p = addr_info; p; p = p->ai_next) {
                 switch (p->ai_family) {
@@ -229,8 +230,17 @@ void ProcessMsg(const cq::MessageEvent &e, uint64_t user_id, uint64_t discuss_id
                 send_message(
                     e.target,
                     sms = "你无权查看完整内容。\n" + getRecentMessages(min(5, atoi(sm[1].str().c_str())), false));
-        } else if (group_id==0&&discuss_id==0) {
-            send_message(e.target, sms = "酷Q 登录账号：\n"+get_login_nickname()+"("+to_string(get_login_user_id())+")\n\n您可发送“帮助”获取可用指令。");
+        } else if (group_id == 0 && discuss_id == 0&&friendAutoReply) {
+            time_t now_t = time(NULL);
+            if (friend_usage_sent.find(user_id) == friend_usage_sent.end()||now_t-friend_usage_sent[user_id]>300) {
+                if (friend_usage_sent.find(user_id) == friend_usage_sent.end())
+                    friend_usage_sent.insert(make_pair(user_id, now_t));
+                else
+                    friend_usage_sent[user_id] = now_t;
+                send_message(e.target,
+                             sms = "酷Q 登录账号：\n" + get_login_nickname() + "(" + to_string(get_login_user_id())
+                                   + ")\n\n您可发送“帮助”获取可用指令。");
+            }
         }
     } catch (const ApiError &ex) {
         ProcessException(ex, sms, user_id, discuss_id, group_id);
@@ -508,4 +518,14 @@ CQ_MENU(menu_toggle_stat_schedule) {
         StopStatScheduleTimer();
     else
         StartStatScheduleTimer();
+}
+
+CQ_MENU(menu_toggle_friend_auto_reply) {
+    friendAutoReply=!friendAutoReply;
+    std::string msg;
+    if (friendAutoReply)
+        msg = "已开启。";
+    else
+        msg = "已关闭。";
+    logging::info("好友自动回复", msg);
 }

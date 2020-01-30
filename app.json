@@ -2,8 +2,8 @@
     "ret": 1,
     "apiver": 9,
     "name": "ChatLog",
-    "version": "1.1.1",
-    "version_id": 9,
+    "version": "1.2.1",
+    "version_id": 11,
     "author": "lxfly2000",
     "description": "消息记录程序",
     "event": [ // 可以修改 priority 来调整插件的优先级, 其它字段不可修改, 否则将无法使用
@@ -129,6 +129,10 @@
     {
       "name": "开启/关闭发送统计消息数量(&S)",
       "function": "menu_toggle_stat_schedule"
+    },
+    {
+      "name": "开启/关闭好友自动回复(&A)",
+      "function": "menu_toggle_friend_auto_reply"
     }
   ],
     "status": [],
