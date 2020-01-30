@@ -82,18 +82,22 @@ void StartStatScheduleTimer();
 void ProcessException(const ApiError &ex, const string &msg, uint64_t user_id, uint64_t discuss_id, uint64_t group_id);
 
 string GetErrorMsg(DWORD e) {
-    LPSTR lpMsgBuf = NULL;
+    WCHAR msgBufW[80] = L"";
 
-    FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+    FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
                   NULL,
                   e,
                   MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                  lpMsgBuf,
-                  0,
+                  msgBufW,
+                  ARRAYSIZE(msgBufW),
                   NULL);
-    string msg(lpMsgBuf);
-    LocalFree(lpMsgBuf);
-    return msg;
+    if (msgBufW[0] == 0) return "发生错误。";
+    wstring msgStrW = msgBufW;
+    size_t pln = msgStrW.find('\n');
+    if (pln != string::npos) msgStrW.resize(pln);
+    pln = msgStrW.find('\r');
+    if (pln != string::npos) msgStrW.resize(pln);
+    return utils::ws2s(msgStrW);
 }
 
 string ToHex(DWORD e) {
@@ -185,59 +189,48 @@ void ProcessMsg(const cq::MessageEvent &e, uint64_t user_id, uint64_t discuss_id
     std::string msg = e.message;
     string sms;
     try {
-        if (lower(msg) == "帮助") {
+        std::smatch sm;
+        if (msg == "帮助") {
             send_message(e.target, sms = "可用指令：\nChatLog - 消息记录\necho - 发送消息\nIP - 获取我的IP地址");
-        }
-        if (lower(msg) == "chatlog") {
+        } else if (lower(msg) == "chatlog") {
             send_message(e.target, sms = "ChatLog 消息记录程序\n输入“ChatLog 帮助”获取命令行使用方法。");
-        }
-        if (lower(msg) == "chatlog 帮助") {
+        } else if (lower(msg) == "chatlog 帮助") {
             send_message(
                 e.target,
                 sms = "ChatLog 指令：\nChatLog 记录 <n> - 发送最近n条消息记录\nChatLog 总数 - 发送已记录的消息数量");
-        }
-        if (lower(msg) == "chatlog 总数") {
+        } else if (lower(msg) == "chatlog 总数") {
             send_message(e.target, sms = "已记录到" + std::to_string(CQGetSharedMemory().count) + "条消息。");
-        }
-        if (sms == ""&&group_id==0&&discuss_id==0) {
-            send_message(e.target, sms = "酷Q 登录账号：\n"+get_login_nickname()+"("+to_string(get_login_user_id())+")\n\n您可发送“帮助”获取可用指令。");
-        }
-        std::smatch sm;
-        if (std::regex_match(msg, sm, std::regex("^chatlog 记录 (\\d+)$"))) {
+        } else if (lower(msg) == "echo") {
+            send_message(e.target, sms = "echo 指令：\necho <消息> - 发送消息");
+        } else if (lower(msg.substr(0, 5)) == "echo ") {
+            EchoCommand(e, user_id, discuss_id, group_id);
+        } else if (lower(msg) == "ip") {
+            send_message(e.target, sms = "我的IP：\n" + GetLocalAddress());
+        } else if (msg == "统计") {
+            string s = iScheduleTimerID ? "开启" : "关闭";
+            send_message(e.target,
+                         sms = "消息统计功能状态：" + s + "\n发送“统计 开启”或“统计 关闭”可开启或关闭统计功能。");
+        } else if (msg == "统计 开启") {
+            StartStatScheduleTimer();
+            if (iScheduleTimerID)
+                send_message(e.target, sms = "已开启消息统计功能。");
+            else
+                send_message(e.target, sms = "无法开启消息统计功能。");
+        } else if (msg == "统计 关闭") {
+            StopStatScheduleTimer();
+            if (iScheduleTimerID)
+                send_message(e.target, sms = "无法关闭消息统计功能。");
+            else
+                send_message(e.target, sms = "已关闭消息统计功能。");
+        } else if (std::regex_match(msg, sm, std::regex("^chatlog 记录 (\\d+)$"))) {
             if (user_id == get_login_user_id())
                 send_message(e.target, sms = getRecentMessages(atoi(sm[1].str().c_str()), true));
             else
                 send_message(
                     e.target,
                     sms = "你无权查看完整内容。\n" + getRecentMessages(min(5, atoi(sm[1].str().c_str())), false));
-        }
-        if (lower(e.message) == "echo") {
-            send_message(e.target, sms = "echo 指令：\necho <消息> - 发送消息");
-        }
-        if (lower(e.message.substr(0, 5)) == "echo ") {
-            EchoCommand(e, user_id, discuss_id, group_id);
-        }
-        if (lower(e.message) == "ip") {
-            send_message(e.target, sms = "我的IP：\n" + GetLocalAddress());
-        }
-        if (e.message == "统计") {
-            string s = iScheduleTimerID ? "开启" : "关闭";
-            send_message(e.target,
-                         sms = "消息统计功能状态：" + s + "\n发送“统计 开启”或“统计 关闭”可开启或关闭统计功能。");
-        }
-        if (e.message == "统计 开启") {
-            StartStatScheduleTimer();
-            if (iScheduleTimerID)
-                send_message(e.target, sms = "已开启消息统计功能。");
-            else
-                send_message(e.target, sms = "无法开启消息统计功能。");
-        }
-        if (e.message == "统计 关闭") {
-            StopStatScheduleTimer();
-            if (iScheduleTimerID)
-                send_message(e.target, sms = "无法关闭消息统计功能。");
-            else
-                send_message(e.target, sms = "已关闭消息统计功能。");
+        } else if (group_id==0&&discuss_id==0) {
+            send_message(e.target, sms = "酷Q 登录账号：\n"+get_login_nickname()+"("+to_string(get_login_user_id())+")\n\n您可发送“帮助”获取可用指令。");
         }
     } catch (const ApiError &ex) {
         ProcessException(ex, sms, user_id, discuss_id, group_id);
