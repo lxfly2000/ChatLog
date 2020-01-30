@@ -1,14 +1,18 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include <iostream>
 #include <map>
 #include <regex>
 #include <set>
 #include <sstream>
 
-#include "cqcppsdk.h"
+#include <cqcppsdk/cqcppsdk.h>
+
+#include <WS2tcpip.h>
+
 #include "comm.hpp"
 
-
 #pragma comment(lib, "winmm.lib")
+#pragma comment(lib, "ws2_32.lib")
 
 using namespace cq;
 using namespace std;
@@ -20,7 +24,7 @@ std::map<uint64_t, uint32_t> group_msg_count;
 int iScheduleTimerID = 0;
 tm last_localtm{};
 
-std::string getRecentMessages(int count, bool send_privacy) {
+std::string getRecentMessages(uint32_t count, bool send_privacy) {
     std::string msg = "最近" + std::to_string(count) + "条消息：";
     CQSharedMemory &m = CQGetSharedMemory();
     if (count > m.count) msg += "（目前只记录了" + std::to_string(m.count) + "条消息）";
@@ -63,7 +67,7 @@ std::string lower(const std::string &str) {
     return r;
 }
 
-void EchoCommand(const MessageEvent &e, uint64_t user_id, uint64_t discuss_id, uint64_t group_id) throw(ApiError) {
+void EchoCommand(const MessageEvent &e, uint64_t user_id, uint64_t discuss_id, uint64_t group_id) {
     std::string cmd = e.message.substr(5);
     if (group_id)
         send_group_message(group_id, cmd);
@@ -77,12 +81,112 @@ void StopStatScheduleTimer();
 void StartStatScheduleTimer();
 void ProcessException(const ApiError &ex, const string &msg, uint64_t user_id, uint64_t discuss_id, uint64_t group_id);
 
+string GetErrorMsg(DWORD e) {
+    LPSTR lpMsgBuf = NULL;
+
+    FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                  NULL,
+                  e,
+                  MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                  lpMsgBuf,
+                  0,
+                  NULL);
+    string msg(lpMsgBuf);
+    LocalFree(lpMsgBuf);
+    return msg;
+}
+
+string ToHex(DWORD e) {
+    char buf[20];
+    sprintf(buf, "%#x", e);
+    return buf;
+}
+
+string GetLocalAddress() {
+    string msg;
+    char strHost[256] = "";
+    if (SOCKET_ERROR == gethostname(strHost, sizeof(strHost))) {
+        DWORD e = WSAGetLastError();
+        msg.assign(GetErrorMsg(e) + "(" + ToHex(e) + ")");
+    } else {
+        msg += "主机名：" + string(strHost);
+        addrinfo *addr_info = NULL;
+        DWORD e = getaddrinfo(strHost, NULL, NULL, &addr_info);
+        if (e) {
+            msg += "\n"+GetErrorMsg(e)+"("+ToHex(e)+")";
+        } else {
+            for (addrinfo *p = addr_info; p; p = p->ai_next) {
+                switch (p->ai_family) {
+                case AF_INET:
+                    msg += "\n";
+                    switch (p->ai_protocol) {
+                    case IPPROTO_IP:
+                        msg += "IP/";
+                        break;
+                    case IPPROTO_IPV4:
+                        msg += "IPv4/";
+                        break;
+                    case IPPROTO_IPV6:
+                        msg += "IPv6/";
+                        break;
+                    case IPPROTO_TCP:
+                        msg += "TCP/";
+                        break;
+                    case IPPROTO_UDP:
+                        msg += "UDP/";
+                        break;
+                    }
+                    msg += "IPv4: ";
+                    char ip_str[INET_ADDRSTRLEN];
+                    if (inet_ntop(p->ai_family, &((sockaddr_in *)p->ai_addr)->sin_addr, ip_str, INET_ADDRSTRLEN)) {
+                        msg += ip_str;
+                    } else {
+                        DWORD e1 = WSAGetLastError();
+                        msg += GetErrorMsg(e1) + "(" + ToHex(e1) + ")";
+                    }
+                    break;
+                case AF_INET6:
+                    msg += "\n";
+                    switch (p->ai_protocol) {
+                    case IPPROTO_IP:
+                        msg += "IP/";
+                        break;
+                    case IPPROTO_IPV4:
+                        msg += "IPv4/";
+                        break;
+                    case IPPROTO_IPV6:
+                        msg += "IPv6/";
+                        break;
+                    case IPPROTO_TCP:
+                        msg += "TCP/";
+                        break;
+                    case IPPROTO_UDP:
+                        msg += "UDP/";
+                        break;
+                    }
+                    msg += "IPv6: ";
+                    char ip6_str[INET6_ADDRSTRLEN];
+                    if (inet_ntop(p->ai_family, &((sockaddr_in6 *)p->ai_addr)->sin6_addr, ip6_str, INET6_ADDRSTRLEN)) {
+                        msg += ip6_str;
+                    } else {
+                        DWORD e1 = WSAGetLastError();
+                        msg += GetErrorMsg(e1) + "(" + ToHex(e1) + ")";
+                    }
+                    break;
+                }
+            }
+        }
+        freeaddrinfo(addr_info);
+    }
+    return msg;
+}
+
 void ProcessMsg(const cq::MessageEvent &e, uint64_t user_id, uint64_t discuss_id, uint64_t group_id) {
     std::string msg = e.message;
     string sms;
     try {
         if (lower(msg) == "帮助") {
-            send_message(e.target, sms = "可用指令：\nChatLog - 消息记录\necho - 发送消息");
+            send_message(e.target, sms = "可用指令：\nChatLog - 消息记录\necho - 发送消息\nIP - 获取我的IP地址");
         }
         if (lower(msg) == "chatlog") {
             send_message(e.target, sms = "ChatLog 消息记录程序\n输入“ChatLog 帮助”获取命令行使用方法。");
@@ -94,6 +198,9 @@ void ProcessMsg(const cq::MessageEvent &e, uint64_t user_id, uint64_t discuss_id
         }
         if (lower(msg) == "chatlog 总数") {
             send_message(e.target, sms = "已记录到" + std::to_string(CQGetSharedMemory().count) + "条消息。");
+        }
+        if (sms == ""&&group_id==0&&discuss_id==0) {
+            send_message(e.target, sms = "酷Q 登录账号：\n"+get_login_nickname()+"("+to_string(get_login_user_id())+")\n\n您可发送“帮助”获取可用指令。");
         }
         std::smatch sm;
         if (std::regex_match(msg, sm, std::regex("^chatlog 记录 (\\d+)$"))) {
@@ -109,6 +216,9 @@ void ProcessMsg(const cq::MessageEvent &e, uint64_t user_id, uint64_t discuss_id
         }
         if (lower(e.message.substr(0, 5)) == "echo ") {
             EchoCommand(e, user_id, discuss_id, group_id);
+        }
+        if (lower(e.message) == "ip") {
+            send_message(e.target, sms = "我的IP：\n" + GetLocalAddress());
         }
         if (e.message == "统计") {
             string s = iScheduleTimerID ? "开启" : "关闭";
@@ -211,7 +321,7 @@ void CALLBACK ScheduleCallback(UINT wTimerID, UINT nMsg, DWORD dwUser, DWORD dw1
             for (auto &gm : group_msg_count) {
                 char msg[200];
                 sprintf(msg,
-                        "本群在%d:%02d:%02d～%d:%02d:%02d期间共收到%d条消息。",
+                        u8"本群在%d:%02d:%02d～%d:%02d:%02d期间共收到%d条消息。",
                         last_localtm.tm_hour,
                         last_localtm.tm_min,
                         last_localtm.tm_sec,

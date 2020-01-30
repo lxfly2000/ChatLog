@@ -2,8 +2,8 @@
     "ret": 1,
     "apiver": 9,
     "name": "ChatLog",
-    "version": "1.0.6",
-    "version_id": 7,
+    "version": "1.1",
+    "version_id": 8,
     "author": "lxfly2000",
     "description": "消息记录程序",
     "event": [ // 可以修改 priority 来调整插件的优先级, 其它字段不可修改, 否则将无法使用
