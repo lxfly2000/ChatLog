@@ -473,16 +473,6 @@ CQ_INIT {
         log += ":" + name;
         cq::logging::info("群", log + ":" + e.message);
     });
-
-    on_group_upload([](const GroupUploadEvent &e) { // 可以使用 auto 自动推断类型
-        stringstream ss;
-        ss << "您上传了一个文件, 文件名: " << e.file.name << ", 大小(字节): " << e.file.size;
-        try {
-            send_message(e.target, ss.str());
-        } catch (const ApiError &ex) {
-            ProcessException(ex, ss.str(), 0, 0, e.group_id);
-        }
-    });
 }
 
 CQ_MENU(menu_send_msg_record) {
