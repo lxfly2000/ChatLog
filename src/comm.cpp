@@ -58,14 +58,13 @@ std::string getRecentMessages(uint32_t count, bool send_privacy) {
     return msg;
 }
 
-std::string lower(const std::string &str) {
-    std::string r = str;
-    for (auto &c : r) {
+std::string lower(std::string str) {
+    for (auto &c : str) {
         if (c >= 'A' && c <= 'Z') {
             c = c + 'a' - 'A';
         }
     }
-    return r;
+    return str;
 }
 
 void EchoCommand(const MessageEvent &e, uint64_t user_id, uint64_t discuss_id, uint64_t group_id) {
@@ -107,7 +106,14 @@ string ToHex(DWORD e) {
     return buf;
 }
 
-string GetLocalAddress() {
+string GetLocalAddress(string protocol) {
+    std::smatch sm;
+    if (std::regex_search(protocol, sm, std::regex(" +([A-Za-z0-9_\\-]+)")))
+        protocol = lower(sm[1].str());
+    if (protocol == "http" || protocol == "ftp" || protocol == "https")
+        protocol += "://";
+    else
+        protocol = "";
     string msg;
     char strHost[256] = "";
     if (SOCKET_ERROR == gethostname(strHost, sizeof(strHost))) {
@@ -142,8 +148,11 @@ string GetLocalAddress() {
                         break;
                     }
                     msg += "IPv4: ";
-                    char ip_str[INET_ADDRSTRLEN];
+                    char ip_str[INET_ADDRSTRLEN + 1];
+                    ZeroMemory(ip_str, sizeof(ip_str));
                     if (inet_ntop(p->ai_family, &((sockaddr_in *)p->ai_addr)->sin_addr, ip_str, INET_ADDRSTRLEN)) {
+                        if (protocol.length())
+                            msg += protocol;
                         msg += ip_str;
                     } else {
                         DWORD e1 = WSAGetLastError();
@@ -170,9 +179,14 @@ string GetLocalAddress() {
                         break;
                     }
                     msg += "IPv6: ";
-                    char ip6_str[INET6_ADDRSTRLEN];
+                    char ip6_str[INET6_ADDRSTRLEN + 1];
+                    ZeroMemory(ip6_str, sizeof(ip6_str));
                     if (inet_ntop(p->ai_family, &((sockaddr_in6 *)p->ai_addr)->sin6_addr, ip6_str, INET6_ADDRSTRLEN)) {
+                        if (protocol.length())
+                            msg += protocol + "[";
                         msg += ip6_str;
+                        if (protocol.length())
+                            msg += "]/";
                     } else {
                         DWORD e1 = WSAGetLastError();
                         msg += GetErrorMsg(e1) + "(" + ToHex(e1) + ")";
@@ -192,7 +206,7 @@ void ProcessMsg(const cq::MessageEvent &e, uint64_t user_id, uint64_t discuss_id
     try {
         std::smatch sm;
         if (msg == "帮助") {
-            send_message(e.target, sms = "可用指令：\nChatLog - 消息记录\necho - 发送消息\nIP - 获取我的IP地址");
+            send_message(e.target, sms = "可用指令：\nChatLog\necho\nIP");
         } else if (lower(msg) == "chatlog") {
             send_message(e.target, sms = "ChatLog 消息记录程序\n输入“ChatLog 帮助”获取命令行使用方法。");
         } else if (lower(msg) == "chatlog 帮助") {
@@ -205,8 +219,8 @@ void ProcessMsg(const cq::MessageEvent &e, uint64_t user_id, uint64_t discuss_id
             send_message(e.target, sms = "echo 指令：\necho <消息> - 发送消息");
         } else if (lower(msg.substr(0, 5)) == "echo ") {
             EchoCommand(e, user_id, discuss_id, group_id);
-        } else if (lower(msg) == "ip") {
-            send_message(e.target, sms = "我的IP：\n" + GetLocalAddress());
+        } else if (lower(msg.substr(0,2)) == "ip") {
+            send_private_message(e.target.user_id.value(), sms = GetLocalAddress(msg.substr(2)));
         } else if (msg == "统计") {
             string s = iScheduleTimerID ? "开启" : "关闭";
             send_message(e.target,
@@ -349,6 +363,10 @@ void CALLBACK ScheduleCallback(UINT wTimerID, UINT nMsg, DWORD dwUser, DWORD dw1
 }
 
 void StopStatScheduleTimer() {
+    if (iScheduleTimerID == 0) {
+        logging::info("计时器", "计时器已经是关闭状态了，无需重复操作。");
+        return;
+    }
     logging::info("计时器", "停止统计定时器……");
     timeKillEvent(iScheduleTimerID);
     iScheduleTimerID = 0;
@@ -356,39 +374,54 @@ void StopStatScheduleTimer() {
 
 void StartStatScheduleTimer() {
     if (iScheduleTimerID) {
-        logging::info("计时器", "检测到程序未正确释放统计定时器。");
+        logging::info("计时器", "检测到程序未正确停止统计定时器，正在停止……");
         timeKillEvent(iScheduleTimerID);
     }
     logging::info("计时器", "启动统计定时器……");
     iScheduleTimerID = timeSetEvent(60000, 60000, ScheduleCallback, NULL, TIME_PERIODIC);
 }
 
+void Init() {
+    if (CQIsSharedMemoryInited()) {
+        logging::info("加载", "共享内存已经加载，无需重复操作。");
+        return;
+    }
+    if (CQInitSharedMemory()) {
+        logging::info("加载", "已加载共享内存。");
+    } else {
+        logging::error("加载", "无法加载共享内存。");
+    }
+}
+
+void Uninit() {
+    StopStatScheduleTimer();
+    if (!CQIsSharedMemoryInited()) {
+        logging::info("释放", "共享内存已经释放，无需重复操作。");
+        return;
+    }
+    if (CQUninitSharedMemory()) {
+        logging::info("释放", "已释放共享内存。");
+    } else {
+        logging::error("释放", "无法释放共享内存。");
+    }
+}
+
 CQ_INIT {
-    on_enable([] { logging::info("启用", "插件已启用"); });
-    on_disable([] { logging::info("停用", "插件已停用"); });
+    on_enable([] {
+        Init();
+        logging::info("启用", "插件已启用");
+    });
+    on_disable([] {
+        Uninit();
+        logging::info("停用", "插件已停用");
+    });
     on_coolq_start([] {
-        if (CQIsSharedMemoryInited()) {
-            logging::warning("加载", "检测到程序未正确释放共享内存，正在尝试释放……");
-            if (CQUninitSharedMemory()) {
-                logging::info("加载", "已释放。");
-            } else {
-                logging::error("加载", "释放失败。");
-            }
-        }
-        if (CQInitSharedMemory()) {
-            logging::info("加载", "已加载共享内存。");
-        } else {
-            logging::error("加载", "无法加载共享内存。");
-        }
-        StartStatScheduleTimer();
+        logging::info("启动", "正在启动……");
+        Init();
     });
     on_coolq_exit([] {
-        StopStatScheduleTimer();
-        if (CQUninitSharedMemory()) {
-            logging::info("释放", "已释放共享内存。");
-        } else {
-            logging::error("释放", "无法释放共享内存。");
-        }
+        logging::info("退出", "正在退出……");
+        Uninit();
     });
 
     on_private_message([](const PrivateMessageEvent &e) {
