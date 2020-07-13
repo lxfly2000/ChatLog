@@ -219,7 +219,7 @@ void ProcessMsg(const cq::MessageEvent &e, uint64_t user_id, uint64_t discuss_id
             send_message(e.target, sms = "echo 指令：\necho <消息> - 发送消息");
         } else if (lower(msg.substr(0, 5)) == "echo ") {
             EchoCommand(e, user_id, discuss_id, group_id);
-        } else if (lower(msg.substr(0,2)) == "ip") {
+        } else if (lower(msg) == "ip"||lower(msg.substr(0,3))=="ip ") {
             send_private_message(e.target.user_id.value(), sms = GetLocalAddress(msg.substr(2)));
         } else if (msg == "统计") {
             string s = iScheduleTimerID ? "开启" : "关闭";
